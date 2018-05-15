@@ -8,7 +8,6 @@ import numpy as np
 import cv2
 import matplotlib
 import matplotlib.pyplot as plt
-import PIL
 
 # Root directory of the project
 ROOT_DIR = os.path.abspath("../../")
@@ -22,8 +21,6 @@ from mrcnn import visualize
 from mrcnn.model import log
 
 #%matplotlib inline
-#from IPython import get_ipython
-#get_ipython().run_line_magic('matplotlib', 'inline')
 
 # Directory to save logs and trained model
 MODEL_DIR = os.path.join(ROOT_DIR, "logs")
@@ -31,8 +28,9 @@ MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 # Local path to trained weights file
 COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
 # Download COCO trained weights from Releases if needed
-#if not os.path.exists(COCO_MODEL_PATH):
-#    utils.download_trained_weights(COCO_MODEL_PATH)
+if not os.path.exists(COCO_MODEL_PATH):
+    print("wrong")
+    utils.download_trained_weights(COCO_MODEL_PATH)
 
 
 class ShapesConfig(Config):
@@ -41,41 +39,33 @@ class ShapesConfig(Config):
     to the toy shapes dataset.
     """
     # Give the configuration a recognizable name
-    NAME = "words"
+    NAME = "shapes"
 
     # Train on 1 GPU and 8 images per GPU. We can put multiple images on each
     # GPU because the images are small. Batch size is 8 (GPUs * images/GPU).
     GPU_COUNT = 1
-    IMAGES_PER_GPU = 1
+    IMAGES_PER_GPU = 8
 
     # Number of classes (including background)
-    NUM_CLASSES = 1 + 1  # background + 3 shapes
+    NUM_CLASSES = 1 + 3  # background + 3 shapes
+
+    # Use small images for faster training. Set the limits of the small side
+    # the large side, and that determines the image shape.
+    IMAGE_MIN_DIM = 128
+    IMAGE_MAX_DIM = 128
 
     # Use smaller anchors because our image and objects are small
-    RPN_ANCHOR_SCALES = (16, 32, 64, 128, 256)  # anchor side in pixels
-    #RPN_ANCHOR_SCALES = (16, 52, 120, 252, 512)
-    RPN_ANCHOR_RATIOS = [0.5, 1, 2]
-
-    IMAGE_MIN_DIM = 800
-    IMAGE_MAX_DIM = 1024
+    RPN_ANCHOR_SCALES = (8, 16, 32, 64, 128)  # anchor side in pixels
 
     # Reduce training ROIs per image because the images are small and have
     # few objects. Aim to allow ROI sampling to pick 33% positive ROIs.
     TRAIN_ROIS_PER_IMAGE = 32
 
     # Use a small epoch since the data is simple
-    STEPS_PER_EPOCH = 1000
+    STEPS_PER_EPOCH = 10
 
-    # use small validation
-    # steps since the epoch is small
-    VALIDATION_STEPS = 20
-
-    LEARNING_RATE = 0.001
-
-    MAX_GT_INSTANCES = 250
-    DETECTION_MAX_INSTANCES = 250
-
-
+    # use small validation steps since the epoch is small
+    VALIDATION_STEPS = 5
 
 
 config = ShapesConfig()
@@ -99,181 +89,25 @@ class ShapesDataset(utils.Dataset):
     The images are generated on the fly. No file access required.
     """
 
-    def __init__(self):
-        utils.Dataset.__init__(self)
-        self._data_path = "/home/file/Mask_RCNN/TianChi_data"
-        self.real_image_path = os.path.join(self._data_path, 'image_9000')
-        self.image_path = os.path.join(self._data_path, 'txt_9000')
-        self._classes = ('__background__', 'words')
-        self._class_to_ind = dict(zip(self._classes, range(2)))
-        self._image_ext = '.jpg'
-        self._image_index = self._load_image_set_index()
-        self._real_image_index = self._load_real_image_set_index()
-        self.num_images = len(self._image_index)
-
-    def _load_image_set_index(self):
-        """
-        Load the indexes listed in this dataset's image set file.
-        """
-        # Example path to image set file:
-        # self._devkit_path + /VOCdevkit2007/VOC2007/ImageSets/Main/val.txt
-        image_set_file = os.path.join(self._data_path, 'txt_9000') #
-        assert os.path.exists(image_set_file), \
-                'Path does not exist: {}'.format(image_set_file)
-        image_index = os.listdir(image_set_file)
-        return image_index
-
-    def _load_real_image_set_index(self):
-        tem = []
-        for txt_name in self._image_index:
-            base_txt_name = os.path.splitext(txt_name)[0]
-            real_image = base_txt_name + '.jpg'
-            tem.append(real_image)
-        return tem
-
-    def _find_outer_ranctangle(self, coor_list):
-        min_x = min(coor_list[0], coor_list[2], coor_list[4], coor_list[6])
-        min_y = min(coor_list[1], coor_list[3], coor_list[5], coor_list[7])
-        max_x = max(coor_list[0], coor_list[2], coor_list[4], coor_list[6])
-        max_y = max(coor_list[1], coor_list[3], coor_list[5], coor_list[7])
-        outer_ranctangle = [min_x, min_y, max_x, max_y]
-        return outer_ranctangle
-
     def load_shapes(self, count, height, width):
         """Generate the requested number of synthetic images.
         count: number of images to generate.
         height, width: the size of the generated images.
         """
         # Add classes
-        self.add_class("words", 1, "s")
+        self.add_class("shapes", 1, "square")
+        self.add_class("shapes", 2, "circle")
+        self.add_class("shapes", 3, "triangle")
+
         # Add images
         # Generate random specifications of images (i.e. color and
         # list of shapes sizes and locations). This is more compact than
         # actual images. Images are generated on the fly in load_image().
-        for i in range(self.num_images):
-
-            txt_path = os.path.join(self.image_path, self._image_index[i])
-            open_file = open(txt_path, "r")
-            lines = open_file.readlines()
-            num_objs = len(lines)
-
-            tmp = np.zeros((num_objs, 8), dtype=np.uint16)
-
-            real_image_path = os.path.join(self.real_image_path, self._real_image_index[i])
-            width_height = PIL.Image.open(real_image_path).size
-            width = width_height[0]
-            height = width_height[1]
-
-            shapes = []
-            boxes = []
-            for j in range(num_objs):
-                line_split = lines[j].split(',')
-                for k in range(8):
-                    line_split[k] = float(line_split[k])
-
-                if line_split[0] < 0:
-                    line_split[0] = 0
-                if line_split[1] < 0:
-                    line_split[1] = 0
-                if line_split[2] < 0:
-                    line_split[2] = 0
-                if line_split[3] < 0:
-                    line_split[3] = 0
-                if line_split[4] < 0:
-                    line_split[4] = 0
-                if line_split[5] < 0:
-                    line_split[5] = 0
-                if line_split[6] < 0:
-                    line_split[6] = 0
-                if line_split[7] < 0:
-                    line_split[7] = 0
-
-                if line_split[0] > width:
-                    line_split[0] = width
-                if line_split[1] > height:
-                    line_split[1] = height
-                if line_split[2] > width:
-                    line_split[2] = width
-                if line_split[3] > height:
-                    line_split[3] = height
-                if line_split[4] > width:
-                    line_split[4] = width
-                if line_split[5] > height:
-                    line_split[5] = height
-                if line_split[6] > width:
-                    line_split[6] = width
-                if line_split[7] > height:
-                    line_split[7] = height
-
-                """
-                tmp[j, :] = [float(line_split[0]), float(line_split[1]), float(line_split[2]), float(line_split[3]), float(line_split[4]), float(line_split[5]), float(line_split[6]), float(line_split[7])]
-                gt_widths = math.sqrt((tmp[j, 4] - tmp[j, 2]) ** 2 + (tmp[j, 5] - tmp[j, 3]) ** 2)
-                gt_heights = math.sqrt((tmp[j, 3] - tmp[j, 1]) ** 2 + (tmp[j, 2] - tmp[j, 0]) ** 2)
-                # if gt_widths == 0:
-                #    print(tmp[i, :])
-                #    print(filename)
-                # if gt_heights == 0:
-                #    print(tmp[i, :])
-                #    print(filename)
-                # assert gt_widths > 0
-                # assert gt_heights > 0
-                if gt_widths == 0 or gt_heights == 0:
-                    continue
-
-                # print(line_split)
-                # print("===============")]
-                
-                for k in [0, 1, 2, 3, 4, 5, 6, 7]:
-                    assert line_split[k] >= 0
-                for l in [0, 2, 4, 6]:
-                    assert line_split[l] <= width
-                for n in [1, 3, 5, 7]:
-                    assert line_split[n] <= height
-                """
-
-                outer_ranctangle = self._find_outer_ranctangle(line_split[:8])
-                x_min = float(outer_ranctangle[0])
-                y_min = float(outer_ranctangle[1])
-                x_max = float(outer_ranctangle[2])
-                y_max = float(outer_ranctangle[3])
-                real_width = x_max - x_min
-                real_height = y_max - y_min
-
-                shape = "s"
-                # Color
-                color = 'None'
-                # Center x, y
-                y = x_min + 0.5*real_width
-                x = y_min + 0.5*real_height
-
-                # Size
-                dims = (x, y, real_height, real_width)
-                real_points = (line_split[0], line_split[1], line_split[2], line_split[3], line_split[4],
-                               line_split[5], line_split[6], line_split[7])
-
-
-                # ["square", "circle", "triangle"]随机选择一个
-                # [_, _, _] 三维颜色
-                # （x, y, s）
-                shapes.append((shape, color, dims, real_points))
-
-            self.add_image("words", image_id=i, path=real_image_path,
+        for i in range(count):
+            bg_color, shapes = self.random_image(height, width)
+            self.add_image("shapes", image_id=i, path=None,
                            width=width, height=height,
-                           bg_color=None, shapes=shapes)
-        """
-        self.image_info: len: num_images
-        self.image_info[i] = {
-            "id": i,
-            "source": "words",
-            "path": real_image_path,
-            "width": width, 
-            "height": height,
-            "bg_color": None, 
-            "shapes": [(shape('kind_square'), color('None'), dims((x, y, real_height, real_width)), real_points(2*4)), ....]
-            len(shapes): num_objs
-        }
-        """
-
+                           bg_color=bg_color, shapes=shapes)
 
     def load_image(self, image_id):
         """Generate an image from the specs of the given image ID.
@@ -281,13 +115,18 @@ class ShapesDataset(utils.Dataset):
         in this case it generates the image on the fly from the
         specs in image_info.
         """
-        image = cv2.imread(self.image_info[image_id]["path"])
+        info = self.image_info[image_id]
+        bg_color = np.array(info['bg_color']).reshape([1, 1, 3])
+        image = np.ones([info['height'], info['width'], 3], dtype=np.uint8)
+        image = image * bg_color.astype(np.uint8)
+        for shape, color, dims in info['shapes']:
+            image = self.draw_shape(image, shape, dims, color)
         return image
 
     def image_reference(self, image_id):
         """Return the shapes data of the image."""
         info = self.image_info[image_id]
-        if info["source"] == "words":
+        if info["source"] == "shapes":
             return info["shapes"]
         else:
             super(self.__class__).image_reference(self, image_id)
@@ -299,9 +138,9 @@ class ShapesDataset(utils.Dataset):
         shapes = info['shapes']
         count = len(shapes)
         mask = np.zeros([info['height'], info['width'], count], dtype=np.uint8)
-        for i, (shape, _, dims, real_points) in enumerate(info['shapes']):
+        for i, (shape, _, dims) in enumerate(info['shapes']):
             mask[:, :, i:i+1] = self.draw_shape(mask[:, :, i:i+1].copy(),
-                                                shape, dims, real_points, 1)
+                                                shape, dims, 1)
         # Handle occlusions
         occlusion = np.logical_not(mask[:, :, -1]).astype(np.uint8)
         for i in range(count-2, -1, -1):
@@ -311,25 +150,66 @@ class ShapesDataset(utils.Dataset):
         class_ids = np.array([self.class_names.index(s[0]) for s in shapes])
         return mask.astype(np.bool), class_ids.astype(np.int32)
 
-    def draw_shape(self, image, shape, dims, real_points, color):
+    def draw_shape(self, image, shape, dims, color):
         """Draws a shape from the given specs."""
         # Get the center x, y and the size s
-        x1, y1, x2, y2, x3, y3, x4, y4 = real_points
-        if shape == "s":
-
-            #pts = np.array([[x1, y1], [x2, y2], [x3, y3], [x4, y4]], np.int32)
-            #pts = pts.reshape((-1, 1, 2))
-            #cv2.fillPoly(image, pts, 1)
-
-            pts = np.array([[[x1, y1], [x2, y2], [x3, y3], [x4, y4]]], dtype=np.int32)
-            cv2.fillPoly(image, pts, color)
-
-            #pts = np.array([[x1, y1], [x2, y2], [x3, y3], [x4, y4]], np.int32)
-            #pts = pts.reshape((-1, 1, 2))
-            #cv2.polylines(image, [pts], True, color, 5)
-
-            #cv2.rectangle(image, (int(x1), int(y1)), (int(x3), int(y3)), 1, -1)
+        x, y, s = dims
+        if shape == 'square':
+            cv2.rectangle(image, (x-s, y-s), (x+s, y+s), color, -1)
+        elif shape == "circle":
+            cv2.circle(image, (x, y), s, color, -1)
+        elif shape == "triangle":
+            points = np.array([[(x, y-s),
+                                (x-s/math.sin(math.radians(60)), y+s),
+                                (x+s/math.sin(math.radians(60)), y+s),
+                                ]], dtype=np.int32)
+            cv2.fillPoly(image, points, color)
         return image
+
+    def random_shape(self, height, width):
+        """Generates specifications of a random shape that lies within
+        the given height and width boundaries.
+        Returns a tuple of three valus:
+        * The shape name (square, circle, ...)
+        * Shape color: a tuple of 3 values, RGB.
+        * Shape dimensions: A tuple of values that define the shape size
+                            and location. Differs per shape type.
+        """
+        # Shape
+        shape = random.choice(["square", "circle", "triangle"])
+        # Color
+        color = tuple([random.randint(0, 255) for _ in range(3)])
+        # Center x, y
+        buffer = 20
+        y = random.randint(buffer, height - buffer - 1)
+        x = random.randint(buffer, width - buffer - 1)
+        # Size
+        s = random.randint(buffer, height//4)
+        return shape, color, (x, y, s)
+
+    def random_image(self, height, width):
+        """Creates random specifications of an image with multiple shapes.
+        Returns the background color of the image and a list of shape
+        specifications that can be used to draw the image.
+        """
+        # Pick random background color
+        bg_color = np.array([random.randint(0, 255) for _ in range(3)])
+        # Generate a few random shapes and record their
+        # bounding boxes
+        shapes = []
+        boxes = []
+        N = random.randint(1, 4)
+        for _ in range(N):
+            shape, color, dims = self.random_shape(height, width)
+            shapes.append((shape, color, dims))
+            x, y, s = dims
+            boxes.append([y-s, x-s, y+s, x+s])
+        # Apply non-max suppression wit 0.3 threshold to avoid
+        # shapes covering each other
+        keep_ixs = utils.non_max_suppression(np.array(boxes), np.arange(N), 0.3)
+        shapes = [s for i, s in enumerate(shapes) if i in keep_ixs]
+        return bg_color, shapes
+
 
 # Training dataset
 dataset_train = ShapesDataset()
@@ -342,18 +222,10 @@ dataset_val.load_shapes(50, config.IMAGE_SHAPE[0], config.IMAGE_SHAPE[1])
 dataset_val.prepare()
 
 
-
-
-
-
-
-
-
 # Load and display random samples
-image_ids = np.random.choice(dataset_train.image_ids, 2)
+image_ids = np.random.choice(dataset_train.image_ids, 4)
 for image_id in image_ids:
     image = dataset_train.load_image(image_id)
-    print(dataset_train._real_image_index[image_id])
     mask, class_ids = dataset_train.load_mask(image_id)
     visualize.display_top_masks(image, mask, class_ids, dataset_train.class_names)
 
@@ -361,13 +233,6 @@ for image_id in image_ids:
 model = modellib.MaskRCNN(mode="training", config=config,
                           model_dir=MODEL_DIR)
 
-
-model_path = "/home/file/Mask_RCNN/mask_rcnn_words_0010.h5"
-model.load_weights(model_path, by_name=True)
-
-
-
-"""
 # Which weights to start with?
 init_with = "coco"  # imagenet, coco, or last
 
@@ -383,19 +248,25 @@ elif init_with == "coco":
 elif init_with == "last":
     # Load the last model you trained and continue training
     model.load_weights(model.find_last()[1], by_name=True)
-"""
 
+
+# Train the head branches
+# Passing layers="heads" freezes all layers except the head
+# layers. You can also pass a regular expression to select
+# which layers to train by name pattern.
 model.train(dataset_train, dataset_val,
-            learning_rate=config.LEARNING_RATE/10/10,
+            learning_rate=config.LEARNING_RATE,
+            epochs=10,
+            layers='heads')
+
+# Fine tune all layers
+# Passing layers="all" trains all layers. You can also
+# pass a regular expression to select which layers to
+# train by name pattern.
+model.train(dataset_train, dataset_val,
+            learning_rate=config.LEARNING_RATE / 10,
             epochs=20,
-            layers='all')
-
-"""
-
-
-
-
-
+            layers="all")
 
 class InferenceConfig(ShapesConfig):
     GPU_COUNT = 1
@@ -412,7 +283,6 @@ model = modellib.MaskRCNN(mode="inference",
 # Either set a specific path or find last trained weights
 # model_path = os.path.join(ROOT_DIR, ".h5 file name here")
 model_path = model.find_last()[1]
-model_path = "/home/file/Mask_RCNN/mask_rcnn_words_0012.h5"
 
 # Load trained weights (fill in path to trained weights here)
 assert model_path != "", "Provide path to trained weights"
@@ -420,45 +290,48 @@ print("Loading weights from ", model_path)
 model.load_weights(model_path, by_name=True)
 
 # Test on a random image
-for _ in range(10):
-    image_id = random.choice(dataset_val.image_ids)
-    original_image, image_meta, gt_class_id, gt_bbox, gt_mask =\
+image_id = random.choice(dataset_val.image_ids)
+original_image, image_meta, gt_class_id, gt_bbox, gt_mask =\
+    modellib.load_image_gt(dataset_val, inference_config,
+                           image_id, use_mini_mask=False)
+
+log("original_image", original_image)
+log("image_meta", image_meta)
+log("gt_class_id", gt_class_id)
+log("gt_bbox", gt_bbox)
+log("gt_mask", gt_mask)
+
+visualize.display_instances(original_image, gt_bbox, gt_mask, gt_class_id,
+                            dataset_train.class_names, figsize=(8, 8))
+
+print("==========")
+results = model.detect([original_image], verbose=1)
+print("==========")
+r = results[0]
+#visualize.display_instances(original_image, r['rois'], r['masks'], r['class_ids'], dataset_val.class_names, r['scores'], ax=get_ax())
+visualize.display_instances(original_image, r['rois'], r['masks'], r['class_ids'],
+                            dataset_val.class_names, r['scores'], figsize=(8, 8))
+print("===========")
+"""
+# Compute VOC-Style mAP @ IoU=0.5
+# Running on 10 images. Increase for better accuracy.
+image_ids = np.random.choice(dataset_val.image_ids, 10)
+APs = []
+for image_id in image_ids:
+    # Load image and ground truth data
+    image, image_meta, gt_class_id, gt_bbox, gt_mask = \
         modellib.load_image_gt(dataset_val, inference_config,
                                image_id, use_mini_mask=False)
-
-    log("original_image", original_image)
-    log("image_meta", image_meta)
-    log("gt_class_id", gt_class_id)
-    log("gt_bbox", gt_bbox)
-    log("gt_mask", gt_mask)
-
-    visualize.display_instances(original_image, gt_bbox, gt_mask, gt_class_id,
-                                dataset_train.class_names, figsize=(8, 8))
-"""
-"""
-    print(original_image)
-    print(original_image.shape)
-    original_image = cv2.imread("/home/file/Mask_RCNN/2.jpg")
-    original_image, window, scale, padding, crop = utils.resize_image(
-        original_image,
-        min_dim=config.IMAGE_MIN_DIM,
-        min_scale=config.IMAGE_MIN_SCALE,
-        max_dim=config.IMAGE_MAX_DIM,
-        mode=config.IMAGE_RESIZE_MODE)
-    print(original_image)
-    print(original_image.shape)
-"""
-"""
-    print("==========")
-    results = model.detect([original_image], verbose=1)
-    print("==========")
+    molded_images = np.expand_dims(modellib.mold_image(image, inference_config), 0)
+    # Run object detection
+    results = model.detect([image], verbose=0)
     r = results[0]
-    #visualize.display_instances(original_image, r['rois'], r['masks'], r['class_ids'],
-    #                            dataset_val.class_names, r['scores'], ax=get_ax())
-    visualize.display_instances(original_image, r['rois'], r['masks'], r['class_ids'],
-                                dataset_val.class_names, r['scores'], figsize=(8, 8))
-    print("==========")
+    # Compute AP
+    AP, precisions, recalls, overlaps = \
+        utils.compute_ap(gt_bbox, gt_class_id, gt_mask,
+                         r["rois"], r["class_ids"], r["scores"], r['masks'])
+    APs.append(AP)
 
-
+print("mAP: ", np.mean(APs))
 
 """
