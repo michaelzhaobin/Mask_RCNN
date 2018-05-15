@@ -1625,9 +1625,6 @@ def generate_random_rois(image_shape, count, gt_class_ids, gt_boxes):
 
 def data_generator(dataset, config, shuffle=True, augment=False, augmentation=None,
                    random_rois=0, batch_size=1, detection_targets=False):
-    #train_generator = data_generator(train_dataset, self.config, shuffle=True,
-    #                                    augmentation=None, 
-    #                                    batch_size=1)
     """A generator that returns images and corresponding target class ids,
     bounding box deltas, and masks.
 
@@ -1667,30 +1664,17 @@ def data_generator(dataset, config, shuffle=True, augment=False, augmentation=No
     """
     b = 0  # batch item index
     image_index = -1
-    image_ids = np.copy(dataset.image_ids) #[0,1,2,,,,,,,num_images-1]
+    image_ids = np.copy(dataset.image_ids)
     error_count = 0
 
     # Anchors
     # [anchor_count, (y1, x1, y2, x2)]
     backbone_shapes = compute_backbone_shapes(config, config.IMAGE_SHAPE)
-    """
-     [[int(math.ceil(image_shape[0] / stride)),
-            int(math.ceil(image_shape[1] / stride))]
-            for stride in config.BACKBONE_STRIDES])
-            [4, 8, 16, 32, 64], image_shape[0]image_shape[1] = 1000
-     [[250, 250], [125, 125], [62.5, 62.5], [31.25, 31.25], [15,625, 15.625]]
-
-    """
     anchors = utils.generate_pyramid_anchors(config.RPN_ANCHOR_SCALES,
                                              config.RPN_ANCHOR_RATIOS,
                                              backbone_shapes,
                                              config.BACKBONE_STRIDES,
                                              config.RPN_ANCHOR_STRIDE)
-    #RPN_ANCHOR_SCALES = (16, 32, 64, 128, 256)
-    #RPN_ANCHOR_RATIOS = [0.5, 1, 2]
-    #[[250, 250], [125, 125], [62.5, 62.5], [31.25, 31.25], [15,625, 15.625]]
-    #[4, 8, 16, 32, 64]
-    #RPN_ANCHOR_STRIDE = 1
 
     # Keras requires a generator to run indefinately.
     while True:
@@ -2290,6 +2274,7 @@ class MaskRCNN():
         }
         if layers in layer_regex.keys():
             layers = layer_regex[layers]
+        # ".*"
 
         # Data generators
         train_generator = data_generator(train_dataset, self.config, shuffle=True,
