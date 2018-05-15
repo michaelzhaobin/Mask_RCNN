@@ -297,10 +297,10 @@ class Dataset(object):
             return ",".join(name.split(",")[:1])
 
         # Build (or rebuild) everything else from the info dicts.
-        self.num_classes = len(self.class_info)
+        self.num_classes = len(self.class_info) # 2
         self.class_ids = np.arange(self.num_classes)
-        self.class_names = [clean_name(c["name"]) for c in self.class_info]
-        self.num_images = len(self.image_info)
+        self.class_names = [clean_name(c["name"]) for c in self.class_info] #["BG", "s"]
+        self.num_images = len(self.image_info) # 图片的数目 10000
         self._image_ids = np.arange(self.num_images)
 
         # Mapping from source class and image IDs to internal IDs
@@ -310,7 +310,7 @@ class Dataset(object):
                                       for info, id in zip(self.image_info, self.image_ids)}
 
         # Map sources to class_ids they support
-        self.sources = list(set([i['source'] for i in self.class_info]))
+        self.sources = list(set([i['source'] for i in self.class_info])) #["", "square"]
         self.source_class_ids = {}
         # Loop over datasets
         for source in self.sources:
